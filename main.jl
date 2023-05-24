@@ -130,6 +130,9 @@ function uniformlc(jd, flux, ε_jd = 1.5, ε_flux = 0.1)
     return uniform_jd, uniform_flux
 end
 
+
+mkpath("plots")
+mkpath("maps")
 stars = string.(readdlm("UXORs.data")[:, 1])
 
 for star in stars
