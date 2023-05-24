@@ -1,5 +1,6 @@
 using FITSIO
 using Plots
+using Plots.PlotMeasures
 using Printf
 using DelimitedFiles
 using Dates
@@ -159,7 +160,7 @@ for star in stars
 
         int_dates = collect(ceil(Int, jd[1]/5)*5:5:floor(Int, jd[end]/5)*5)
         string_dates = Dates.format.(julian2datetime.(int_dates), "d u Y")
-        plt = plot(jd, mag, xticks = (int_dates, string_dates), label = false, rightmargin = 15px, yflip = true)
+        plt = plot(jd, mag, xticks = (int_dates, string_dates), label = false, rightmargin = 15px, yflip = true, ylabel = "TESS magnitude")
         savefig(plt, "plots/$star-$sector.pdf")
         savefig(plt, "$star/$sector-lc.pdf")
     end
