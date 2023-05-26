@@ -20,7 +20,7 @@ function findbkg(cut, aperture_size)
     return min_index[1]-aperture_size:min_index[1]+aperture_size, min_index[2]-aperture_size:min_index[2]+aperture_size
 end
 
-negativetonan(x) = x < 0 ? NaN : x
+negativetonan(x) = x ≤ 0 ? NaN : x
 
 function findstar(cut, aperture_size)
     cut_width = size(cut)[1]
@@ -101,6 +101,45 @@ function getlc(star, tess_cut_fits)
     # jd_end = jd[end]
 end
 
+function cleanlc(jd, flux)
+    non_nan_index = 0
+    nan_index = 0
+    clean_jd = Float64[]
+    clean_flux = Float64[]
+    N = length(jd)
+    for i = 1:N
+        # println("$nan_index $non_nan_index")
+        if !isnan(flux[i]) & (nan_index == non_nan_index)
+            non_nan_index = i
+            # if nan_index < non_nan_index
+            #     nan_index = i
+            # end
+        elseif isnan(flux[i])
+            nan_index = i
+            if (non_nan_index != 0) & ((nan_index - non_nan_index) > 10)
+                # println(flux[non_nan_index:nan_index])
+                push!(clean_jd, jd[non_nan_index:nan_index]...)
+                push!(clean_flux, flux[non_nan_index:nan_index]...)
+            end
+            non_nan_index = i
+        end
+    end
+    if (non_nan_index != 0) & ((N - non_nan_index) > 10)
+        # println(flux[non_nan_index:N])
+        push!(clean_jd, jd[non_nan_index:N]...)
+        push!(clean_flux, flux[non_nan_index:N]...)
+    end
+    # println(clean_jd)
+    # println(clean_flux)
+    if (length(clean_jd) > 0)
+        if isnan(clean_jd[end])
+            return clean_jd[1:end-1], clean_flux[1:end-1]
+        end
+    end
+        
+    return clean_jd, clean_flux
+end
+
 function uniformlc(jd, flux, ε_jd = 1.5, ε_flux = 0.1)
     uniform_jd = Float64[]
     uniform_flux = Float64[]
@@ -111,18 +150,32 @@ function uniformlc(jd, flux, ε_jd = 1.5, ε_flux = 0.1)
         new_jd_step = jd[i] - jd[i-1]
         new_flux_step = flux[i] - flux[i-1]
         if (new_jd_step/jd_step > ε_jd) | (jd_step/new_jd_step > ε_jd)
-            push!(uniform_jd, jd[i])
+            push!(uniform_jd, NaN)
             push!(uniform_flux, NaN)
-        elseif (abs(new_flux_step)/flux[i] > ε_flux)
-            push!(uniform_jd, jd[i])
-            push!(uniform_flux, NaN)
-            if abs(flux_step + new_flux_step)/flux[i] < ε_flux
-                push!(uniform_jd, jd[i])
-                push!(uniform_flux, flux[i])
+        elseif (abs(new_flux_step)/flux[i-1] > ε_flux)
+            if i < N_samples
+                if abs(flux[i+1] - flux[i-1])/flux[i-1] < ε_flux
+                    push!(uniform_jd, jd[i])
+                    push!(uniform_flux, (flux[i+1] + flux[i-1])/2)
+                    continue
+                else abs(flux[i+1] - flux[i])/flux[i] < ε_flux
+                    push!(uniform_jd, jd[i])
+                    push!(uniform_flux, flux[i])
+                    continue
+                end
             end
+            push!(uniform_jd, NaN)
+            push!(uniform_flux, NaN)
+            # if abs(flux_step + new_flux_step)/flux[i-1] < ε_flux
+            #     push!(uniform_jd, jd[i])
+            #     push!(uniform_flux, flux[i])
+            # end
         else
             push!(uniform_jd, jd[i])
             push!(uniform_flux, flux[i])
+            if isnan(uniform_flux[end])
+                uniform_jd[end] = NaN
+            end
         end
         jd_step = new_jd_step
         flux_step = new_flux_step
@@ -131,6 +184,39 @@ function uniformlc(jd, flux, ε_jd = 1.5, ε_flux = 0.1)
     return uniform_jd, uniform_flux
 end
 
+function tessmag(flux)
+    return -2.5*log10(flux) + 20.44
+end
+
+function mergelc(jd1, flux1, jd2, flux2)
+    N_1 = length(jd1)
+    N_2 = length(jd2)
+    if N_1 == 0
+        return jd2, flux2
+    end
+    if N_2 == 0
+        return jd1, flux1
+    end
+    N = N_1 + N_2 + 1
+    jd = zeros(N)
+    flux = zeros(N)
+    if jd1[end] < jd2[1]
+        jd[1:N_1] = jd1[:]
+        flux[1:N_1] = flux1[:]
+        jd[N_1+1] = jd2[1]
+        flux[N_1+1] = NaN
+        jd[N_1+2:N] = jd2[:]
+        flux[N_1+2:N] = flux2[:]
+    else 
+        jd[1:N_2] = jd2[:]
+        flux[1:N_2] = flux2[:]
+        jd[N_2+1] = jd1[1]
+        flux[N_2+1] = NaN
+        jd[N_2+2:N] = jd1[:]
+        flux[N_2+2:N] = flux1[:]
+    end
+    return jd, flux
+end
 
 mkpath("plots")
 mkpath("maps")
@@ -138,6 +224,8 @@ stars = string.(readdlm("UXORs.data")[:, 1])
 
 for star in stars
     println(star)
+    jd_all = Float64[]
+    flux_all = Float64[]
     for fits_file in readdir(star)
         if fits_file[1:4] != "tess"
             continue
@@ -148,21 +236,44 @@ for star in stars
 
         jd, flux = getlc(star, fits_file)
         jd, flux = uniformlc(jd, flux)
-        
+
+        jd, flux = cleanlc(jd, flux)
+
         mag = -2.5*log10.(flux) .+ 20.44
 
         open("$star/$sector-lc.dat", "w") do io
             println(io, "#jd flux")
             for n = 1:length(jd)
-                @printf(io, "%15.6f %12.3e %12.3f\n", jd[n], flux[n], mag[n])
+                @printf(io, "%15.6f %15.6e %15.6f\n", jd[n], flux[n], mag[n])
             end
         end
-
-        int_dates = collect(ceil(Int, jd[1]/5)*5:5:floor(Int, jd[end]/5)*5)
+        if length(jd) > 0
+            int_dates = collect(ceil(Int, jd[1]/5)*5:5:floor(Int, jd[end]/5)*5)
+            string_dates = Dates.format.(julian2datetime.(int_dates), "d u Y")
+            plt = plot(jd, tessmag.(flux), xticks = (int_dates, string_dates), label = false, rightmargin = 15px, yflip = true, ylabel = "TESS magnitude")
+            savefig(plt, "plots/$star-$sector.pdf")
+            savefig(plt, "$star/$sector-lc.pdf")
+            jd_all, flux_all = mergelc(jd_all, flux_all, jd, flux)
+        end
+    end
+    jd, flux = cleanlc(jd_all, flux_all)
+    if length(jd) > 0
+        jd_range = jd[end] - jd[1]
+        int_jd_step = round(Int, jd_range/5) ÷ 5 * 5
+        println(int_jd_step)
+        int_dates = collect(ceil(Int, jd[1]/int_jd_step)*int_jd_step:int_jd_step:floor(Int, jd[end]/int_jd_step)*int_jd_step)
+        println(int_dates)
         string_dates = Dates.format.(julian2datetime.(int_dates), "d u Y")
-        plt = plot(jd, mag, xticks = (int_dates, string_dates), label = false, rightmargin = 15px, yflip = true, ylabel = "TESS magnitude")
-        savefig(plt, "plots/$star-$sector.pdf")
-        savefig(plt, "$star/$sector-lc.pdf")
+        plt = plot(jd, tessmag.(flux), xticks = (int_dates, string_dates), label = false, rightmargin = 15px, yflip = true, ylabel = "TESS magnitude")
+        savefig(plt, "plots/$star.pdf")
+        savefig(plt, "$star/lc.pdf")
+
+        open("$star/lc.dat", "w") do io
+            println(io, "#jd flux")
+            for n = 1:length(jd)
+                @printf(io, "%15.6f %15.6e %15.6f\n", jd[n], flux[n], tessmag(flux[n]))
+            end
+        end
     end
 end
 # plot(jd, flux)
