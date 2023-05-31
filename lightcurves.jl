@@ -13,7 +13,7 @@ function findbkg(cut, aperture_size)
         width_aperture = i-aperture_size:i+aperture_size
         for j=1+aperture_size:cut_height-aperture_size
             height_aperture = j-aperture_size:j+aperture_size
-            aperture_flux[i-1,j-1] = sum(cut[width_aperture, height_aperture])
+            aperture_flux[i-1,j-1] = sum(nantobig.(cut[width_aperture, height_aperture]))
         end
     end
     min_index = findmin(aperture_flux)[2] + CartesianIndex(1,1)
@@ -21,6 +21,8 @@ function findbkg(cut, aperture_size)
 end
 
 negativetonan(x) = x ≤ 0 ? NaN : x
+
+nantobig(x) = isnan(x) ? 1e100 : x
 
 function findstar(cut, aperture_size)
     cut_width = size(cut)[1]
@@ -30,7 +32,7 @@ function findstar(cut, aperture_size)
         width_aperture = i-aperture_size:i+aperture_size
         for j=1+aperture_size:cut_height-aperture_size
             height_aperture = j-aperture_size:j+aperture_size
-            aperture_flux[i-1,j-1] = sum(cut[width_aperture, height_aperture])
+            aperture_flux[i-1,j-1] = sum((cut[width_aperture, height_aperture]))
         end
     end
     max_index = findmax(aperture_flux)[2] + CartesianIndex(1,1)
@@ -252,6 +254,7 @@ for star in stars
             string_dates = Dates.format.(julian2datetime.(int_dates), "d u Y")
             plt = plot(jd, tessmag.(flux), xticks = (int_dates, string_dates), label = false, rightmargin = 15px, yflip = true, ylabel = "TESS magnitude")
             savefig(plt, "plots/$star-$sector.pdf")
+            savefig(plt, "plots/$star-$sector.png")
             savefig(plt, "$star/$sector-lc.pdf")
             jd_all, flux_all = mergelc(jd_all, flux_all, jd, flux)
         end
@@ -266,6 +269,7 @@ for star in stars
         string_dates = Dates.format.(julian2datetime.(int_dates), "d u Y")
         plt = plot(jd, tessmag.(flux), xticks = (int_dates, string_dates), label = false, rightmargin = 15px, yflip = true, ylabel = "TESS magnitude")
         savefig(plt, "plots/$star.pdf")
+        savefig(plt, "plots/$star.png")
         savefig(plt, "$star/lc.pdf")
 
         open("$star/lc.dat", "w") do io

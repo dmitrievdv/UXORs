@@ -99,6 +99,26 @@ smoothfft(freq, fft) = [abs(freq[i]) > 8 ? 1e-50im : fft[i] for i = 1:length(fre
 
 samplingstep(jd) = jd[2]-jd[1]
 
+function getffts(star)
+    lc_file = "$star/lc.dat"
+    lc_data = try
+        Float64.(readdlm(lc_file)[2:end,:])
+    catch
+        return -1
+    end
+    jd = lc_data[:,1]
+    flux = lc_data[:,3]
+
+    split_jd, split_flux = splitlc(jd, flux)
+    extended_fluxes = detrendandextend.(split_jd, split_flux)
+    extended_jds = extendjd.(split_jd)
+    plt_lc = plot(extended_jds, extended_fluxes)
+    # split_flux[2] = split_flux[2] .- 1000
+    freqs = freq.(extended_jds)
+    ffts = fft.(extended_fluxes)
+    return freqs, ffts
+end
+
 function getderivdisp(star)
 # star = "BMAnd"
     lc_file = "$star/lc.dat"
@@ -128,10 +148,13 @@ function getderivdisp(star)
     disp = derivdisp.(split_deriv)
     max = [maximum(abs.(deriv)) for deriv in split_deriv]
     println(disp)
+    
     plt_fft = plot(fftshift.(freqs), fftshift.(fft_dists), xlims = (-5,5), yrange = (-0.5,3), title = "$star")
     plt_deriv = plot(deriv_jd, split_deriv)
     return sum(disp)/length(disp)
 end
+
+
 
 uxorsdata = readdlm("UXORs.data")
 stars = String.(uxorsdata[:,1])
