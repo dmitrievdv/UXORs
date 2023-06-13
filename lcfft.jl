@@ -49,6 +49,16 @@ function fftdist(freq, abs_fft)
     return abs_fft/norm
 end
 
+function detrend(jd, flux)
+    N_samples = length(jd)
+    jd_start = jd[1]; jd_end = jd[end]
+    jd_range = jd_end - jd_start
+    flux_start = flux[1]; flux_end = flux[end]
+    flux_change = flux_end - flux_start
+    detrended_flux = flux .- (flux_start .+ flux_change/jd_range * (jd .- jd_start))
+    return detrended_flux
+end
+
 function detrendandextend(jd, flux)
     N_samples = length(jd)
     jd_start = jd[1]; jd_end = jd[end]
@@ -110,13 +120,26 @@ function getffts(star)
     flux = lc_data[:,3]
 
     split_jd, split_flux = splitlc(jd, flux)
-    extended_fluxes = detrendandextend.(split_jd, split_flux)
-    extended_jds = extendjd.(split_jd)
-    plt_lc = plot(extended_jds, extended_fluxes)
+    extended_fluxes = detrend.(split_jd, split_flux)
+    extended_jds = split_jd
+    # plt_lc = plot(extended_jds, extended_fluxes)
     # split_flux[2] = split_flux[2] .- 1000
     freqs = freq.(extended_jds)
     ffts = fft.(extended_fluxes)
     return freqs, ffts
+end
+
+function splitlc(star)
+    lc_file = "$star/lc.dat"
+    lc_data = try
+        Float64.(readdlm(lc_file)[2:end,:])
+    catch
+        return -1
+    end
+    jd = lc_data[:,1]
+    flux = lc_data[:,3]
+
+    splitlc(jd, flux)
 end
 
 function getderivdisp(star)
@@ -154,10 +177,52 @@ function getderivdisp(star)
     return sum(disp)/length(disp)
 end
 
+star = "SUAur"
+freqs, ffts = getffts(star)
 
+jds, lcs = splitlc(star)
+detrended_lcs = detrend.(jds, lcs) 
 
-uxorsdata = readdlm("UXORs.data")
-stars = String.(uxorsdata[:,1])
-Ts = Float64.(uxorsdata[:,4])
+plt_fft = plot(legend = false, xlims = (1.0, 5.0))
+inds = [1,2,4,5,6]
+for (freq, fft) in zip(freqs[inds], ffts[inds])
+    plot!(plt_fft, 1 ./ fftshift(freq), fftshift(abs.(fft) .^ 2) ./ (2pi*length(fft)))
+    scatter!(plt_fft, 1 ./ fftshift(freq), fftshift(abs.(fft) .^ 2) ./ (2pi*length(fft)), ms = 1)
+end
 
-disps = getderivdisp.(stars)
+plt_lc = plot(legend = false)
+for (jd, lc) in zip(jds[inds], detrended_lcs[inds])
+    plot!(plt_lc, jd .- jd[1], lc)
+end
+plt_lc
+
+plt_phase = plot(legend = false, xlims = (1.0, 5.0))
+for (freq, fft) in zip(freqs[inds], ffts[inds])
+    plot!(plt_phase, 1 ./ fftshift(freq), fftshift(angle.(fft)))
+    scatter!(plt_phase, 1 ./ fftshift(freq), fftshift(angle.(fft)), ms = 1)
+end
+plt_phase
+
+pers = zeros(length(inds))
+phases = zeros(length(inds))
+for i in eachindex(inds)
+    ind = inds[i]
+    loc = findmax(@. (abs.(ffts[ind][@. abs(1 / freqs[ind] - 3) < 1]) .^ 2) ./ (2pi*length(ffts[ind][@. abs(1 / freqs[ind] - 3) < 1])))[2]
+
+    # loc = findmin(@. abs(1 / freqs[ind] - 3))[2]
+    pers[i] = @. abs(1 / freqs[ind][@. abs(1 / freqs[ind] - 3) < 1])[loc]
+    phases[i] = angle(ffts[ind][@. abs(1 / freqs[ind] - 3) < 1][loc])
+end
+
+plt_lc_phased = plot(legend = false)
+for (jd, lc, ph, per) in zip(jds[inds], detrended_lcs[inds], phases, pers)
+    plot!(plt_lc_phased, jd .- jd[1] .+ ph/2π * 2.5, lc)
+end
+plt_lc_phased
+
+# plot(plt_phase, plt_fft)
+# uxorsdata = readdlm("UXORs.data")
+# stars = String.(uxorsdata[:,1])
+# Ts = Float64.(uxorsdata[:,4])
+
+# disps = getderivdisp.(stars)

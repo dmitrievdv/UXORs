@@ -264,10 +264,10 @@ for star in stars
         jd_range = jd[end] - jd[1]
         int_jd_step = round(Int, jd_range/5) ÷ 5 * 5
         println(int_jd_step)
-        int_dates = collect(ceil(Int, jd[1]/int_jd_step)*int_jd_step:int_jd_step:floor(Int, jd[end]/int_jd_step)*int_jd_step)
+        int_dates = collect(round(Int, jd[1]/int_jd_step)*int_jd_step:int_jd_step:round(Int, jd[end]/int_jd_step)*int_jd_step)
         println(int_dates)
         string_dates = Dates.format.(julian2datetime.(int_dates), "d u Y")
-        plt = plot(jd, tessmag.(flux), xticks = (int_dates, string_dates), label = false, rightmargin = 15px, yflip = true, ylabel = "TESS magnitude")
+        plt = plot(jd, tessmag.(flux), xticks = (int_dates, string_dates), label = false, rightmargin = 15px, yflip = true, ylabel = "TESS magnitude", xlims = (int_dates[1] - 2, int_dates[end]+2))
         savefig(plt, "plots/$star.pdf")
         savefig(plt, "plots/$star.png")
         savefig(plt, "$star/lc.pdf")
