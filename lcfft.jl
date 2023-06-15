@@ -2,6 +2,9 @@ using DelimitedFiles
 using Plots
 using Plots.PlotMeasures
 using FFTW
+using NFFT
+using LinearRegression
+using LombScargle
 
 function splitlc(jd, flux)
     split_jd = Vector{Float64}[]
@@ -47,6 +50,14 @@ function fftdist(freq, abs_fft)
     freq_step = freq[2] - freq[1]
     norm = sum(abs_fft[1:end])*freq_step
     return abs_fft/norm
+end
+
+function detrendlinearregresion(jd, flux)
+    jd_start = jd[1]; jd_end = jd[end]
+    times = jd .- jd_start
+    lr = linregress(times, flux)
+    a, b = coef(lr)
+    detrended_flux = flux - a*times .- b
 end
 
 function detrend(jd, flux)
@@ -108,6 +119,16 @@ end
 smoothfft(freq, fft) = [abs(freq[i]) > 8 ? 1e-50im : fft[i] for i = 1:length(freq)]
 
 samplingstep(jd) = jd[2]-jd[1]
+
+function getffts(split_jd, split_flux)
+    extended_fluxes = detrendlinearregresion.(split_jd, split_flux)
+    extended_jds = split_jd
+    # plt_lc = plot(extended_jds, extended_fluxes)
+    # split_flux[2] = split_flux[2] .- 1000
+    freqs = freq.(extended_jds)
+    ffts = fft.(extended_fluxes)
+    return freqs, ffts
+end
 
 function getffts(star)
     lc_file = "$star/lc.dat"
@@ -177,52 +198,96 @@ function getderivdisp(star)
     return sum(disp)/length(disp)
 end
 
-star = "SUAur"
-freqs, ffts = getffts(star)
+function joincloselc(jds, lcs; Δt = 2.0)
+    joined_jds = Vector{Float64}[]
+    joined_lcs = Vector{Float64}[]
+    push!(joined_jds, deepcopy(jds[1]))
+    push!(joined_lcs, deepcopy(lcs[1]))
+    for (jd, lc) in zip(jds[2:end], lcs[2:end])
+        if jd[1] - joined_jds[end][end] < Δt
+            append!(joined_jds[end], deepcopy(jd))
+            append!(joined_lcs[end], deepcopy(lc))
+        else
+            push!(joined_jds, deepcopy(jd))
+            push!(joined_lcs, deepcopy(lc))
+        end
+    end
+    return joined_jds, joined_lcs
+end
+
+function getNFFT(jd, lc; N2 = 1000)
+    N = 2*N2
+    k = (jd .- jd[1])
+    t_end = k[end]
+    k = k / 10t_end .- 0.5
+    J = length(k)
+    f = deepcopy(lc)
+    p = plan_nfft(k, N, reltol = 1e-9, σ = 2.0)
+    freqs = [-N2:N2-1;] / 10t_end
+    return freqs, adjoint(p) * f
+end
+
+
+star = "WWVul"
+
 
 jds, lcs = splitlc(star)
-detrended_lcs = detrend.(jds, lcs) 
+detrended_lcs = detrendlinearregresion.(jds, lcs) 
 
-plt_fft = plot(legend = false, xlims = (1.0, 5.0))
-inds = [1,2,4,5,6]
-for (freq, fft) in zip(freqs[inds], ffts[inds])
-    plot!(plt_fft, 1 ./ fftshift(freq), fftshift(abs.(fft) .^ 2) ./ (2pi*length(fft)))
-    scatter!(plt_fft, 1 ./ fftshift(freq), fftshift(abs.(fft) .^ 2) ./ (2pi*length(fft)), ms = 1)
+freqs, ffts = getffts(jds, lcs)
+joined_jds, joined_lcs = joincloselc(jds, lcs)
+joined_jds, joined_detrended_lcs = joincloselc(jds, detrended_lcs, Δt = 2)
+
+nfft_freqs = Vector{Float64}[]
+nffts = Vector{ComplexF64}[]
+for (jd, lc) in zip(joined_jds, joined_detrended_lcs)
+    nfft_freq, nfft = getNFFT(jd, lc)
+    push!(nfft_freqs, nfft_freq)
+    push!(nffts, nfft)
 end
 
-plt_lc = plot(legend = false)
-for (jd, lc) in zip(jds[inds], detrended_lcs[inds])
-    plot!(plt_lc, jd .- jd[1], lc)
-end
-plt_lc
-
-plt_phase = plot(legend = false, xlims = (1.0, 5.0))
-for (freq, fft) in zip(freqs[inds], ffts[inds])
-    plot!(plt_phase, 1 ./ fftshift(freq), fftshift(angle.(fft)))
-    scatter!(plt_phase, 1 ./ fftshift(freq), fftshift(angle.(fft)), ms = 1)
-end
-plt_phase
-
-pers = zeros(length(inds))
-phases = zeros(length(inds))
-for i in eachindex(inds)
-    ind = inds[i]
-    loc = findmax(@. (abs.(ffts[ind][@. abs(1 / freqs[ind] - 3) < 1]) .^ 2) ./ (2pi*length(ffts[ind][@. abs(1 / freqs[ind] - 3) < 1])))[2]
-
-    # loc = findmin(@. abs(1 / freqs[ind] - 3))[2]
-    pers[i] = @. abs(1 / freqs[ind][@. abs(1 / freqs[ind] - 3) < 1])[loc]
-    phases[i] = angle(ffts[ind][@. abs(1 / freqs[ind] - 3) < 1][loc])
+nfft_phases = zeros(length(nffts))
+nfft_periods = zeros(length(nffts))
+for i = eachindex(nfft_phases)
+    i_max = findmax(abs.(nffts[i]) .^ 2)[2]
+    nfft_periods[i] = 1 / abs(nfft_freqs[i][i_max])
+    
+    nfft_phases[i] = angle(nffts[i][i_max]) 
+    # if nfft_phases[i] < 0.0 
+    #     nfft_phases[i] += π
+    # end
 end
 
-plt_lc_phased = plot(legend = false)
-for (jd, lc, ph, per) in zip(jds[inds], detrended_lcs[inds], phases, pers)
-    plot!(plt_lc_phased, jd .- jd[1] .+ ph/2π * 2.5, lc)
+# joined_detrended_lcs = detrendlinearregresion.(joined_jds, joined_lcs)
+periodograms = lombscargle.(joined_jds, joined_detrended_lcs)
+
+inds = [1,2]
+
+
+plt_joined = plot(legend = false, yflip = true)
+for (jd, lc) in zip(joined_jds, joined_lcs)
+    plot!(plt_joined, jd .- jd[1], lc)
+    # scatter!(plt_joined, jd .- jd[1], lc, ms = 1, mc = :black)
 end
-plt_lc_phased
+plt_joined
 
-# plot(plt_phase, plt_fft)
-# uxorsdata = readdlm("UXORs.data")
-# stars = String.(uxorsdata[:,1])
-# Ts = Float64.(uxorsdata[:,4])
+plt_joined_detrended = plot(legend = false, yflip = true)
+for (jd, lc) in zip(joined_jds, joined_detrended_lcs)
+    plot!(plt_joined_detrended, jd .- jd[1], lc)
+    # scatter!(plt_joined_detrended, jd .- jd[1], lc, ms = 1, mc = :black)
+end
+plt_joined_detrended
 
-# disps = getderivdisp.(stars)
+# nfft_period = sum(nfft_periods)/length(nfft_periods)
+plt_joined_phased= plot(legend = false, yflip = true, xlims = (0,25))
+for (jd, lc, ph, per) in zip(joined_jds, joined_detrended_lcs, nfft_phases, nfft_periods)
+    plot!(plt_joined_phased, jd .- jd[1] .+ ph/2π*per, lc)
+    # scatter!(plt_joined_detrended, jd .- jd[1], lc, ms = 1, mc = :black)
+end
+plt_joined_phased
+
+plt_periodograms = plot(legend = false, xlims = (0,1))
+for periodogram in periodograms
+    plot!(plt_periodograms, freqpower(periodogram)...)
+end
+plt_periodograms
